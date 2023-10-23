@@ -11,7 +11,11 @@ def performDCT(Y, block_size, width, height):
     for a in range(0, height, block_size):
         for b in range(0, width, block_size):
             block = Y[a:a + block_size, b:b + block_size]
-            # fill zero values!!!
+            # fill zero values!!!===================================
+            for c in range (0, a + block_size - height):
+                block[height-a+c,:] = block[height-a-1,:]
+            for d in range (0, b + block_size - width):
+                block[:, width-b+d] = block[:, width-b-1]
             block = block.flatten()
             block = block.astype('int32')
             blocks.append(block)

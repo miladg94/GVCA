@@ -1,6 +1,64 @@
 import numpy as np
 from numba import jit, cuda
 
+@jit(target_backend='cuda', nopython=True)
+def partial_butterfly32(src, shift, line):
+    ptrdst = 0
+    ptrsrc = 0
+    add = 1 << (shift-1)
+    E = np.zeros(16, dtype=np.int32)
+    O = np.zeros(16, dtype=np.int32)
+    EE = np.zeros(8, dtype=np.int32)
+    EO = np.zeros(8, dtype=np.int32)
+    EEE = np.zeros(4, dtype=np.int32)
+    EEO = np.zeros(4, dtype=np.int32)
+    EEEE = np.zeros(2, dtype=np.int32)
+    EEEO = np.zeros(2, dtype=np.int32)
+    dst = np.zeros(1024, dtype=np.int32)
+    for j in range(line):
+        for k in range(16):
+            E[k] = src[k + ptrsrc] + src[31 - k + ptrsrc]
+            O[k] = src[k + ptrsrc] - src[31 - k + ptrsrc]
+        for k in range(8):
+            EE[k] = E[k] + E[15 - k]
+            EO[k] = E[k] - E[15 - k]
+        for k in range(4):
+            EEE[k] = EE[k] + EE[7 - k]
+            EEO[k] = EE[k] - EE[7 - k]
+        EEEE[0] = EEE[0] + EEE[3]
+        EEEO[0] = EEE[0] - EEE[3]
+        EEEE[1] = EEE[1] + EEE[2]
+        EEEO[1] = EEE[1] - EEE[2]
+
+        dst[0 + ptrdst] = np.int32((g_t32[0] * EEEE[0] + g_t32[1] * EEEE[1] + add) >> shift)
+        dst[16 * line + ptrdst] = np.int32((g_t32[512] * EEEE[0] + g_t32[512+1] * EEEE[1] + add) >> shift)
+        dst[8 * line + ptrdst] = np.int32((g_t32[256] * EEEO[0] + g_t32[256+1] * EEEO[1] + add) >> shift)
+        dst[24 * line + ptrdst] = np.int32((g_t32[768] * EEEO[0] + g_t32[768+1] * EEEO[1] + add) >> shift)
+
+        for k in range(4, 32, 8):
+            dst[k * line + ptrdst] = np.int32((g_t32[k*32+0] * EEO[0] + g_t32[k*32+1] * EEO[1]
+                                                + g_t32[k*32+2] * EEO[2] + g_t32[k*32+3] * EEO[3] + add)
+                                                >> shift)
+
+        for k in range(2, 32, 4):
+            dst[k * line + ptrdst] = np.int32((g_t32[k*32+0] * EO[0] + g_t32[k*32+1] * EO[1]
+                                                + g_t32[k*32+2] * EO[2] + g_t32[k*32+3] * EO[3]
+                                                + g_t32[k*32+4] * EO[4] + g_t32[k*32+5] * EO[5]
+                                                + g_t32[k*32+6] * EO[6] + g_t32[k*32+7] * EO[7] + add)
+                                                >> shift)
+
+        for k in range(1, 32, 2):
+            dst[k * line + ptrdst] = np.int32((g_t32[k*32+0] * O[0] + g_t32[k*32+1] * O[1] + g_t32[k*32+2] * O[2]
+                                                + g_t32[k*32+3] * O[3] + g_t32[k*32+4] * O[4] + g_t32[k*32+5] * O[5]
+                                                + g_t32[k*32+6] * O[6] + g_t32[k*32+7] * O[7] + g_t32[k*32+8] * O[8]
+                                                + g_t32[k*32+9] * O[9] + g_t32[k*32+10] * O[10] + g_t32[k*32+11] * O[11]
+                                                + g_t32[k*32+12] * O[12] + g_t32[k*32+13] * O[13] + g_t32[k*32+14] * O[14]
+                                                + g_t32[k*32+15] * O[15] + add)
+                                                >> shift)
+        ptrsrc += 32
+        ptrdst += 1
+    return dst
+
 g_t32 = np.array([
         64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64,
         64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64,
@@ -66,62 +124,3 @@ g_t32 = np.array([
         -9, 25,  -43, 57,  -70, 80,  -87, 90,  -90, 87,  -80, 70,  -57, 43,  -25, 9,
        4,  -13, 22, -31, 38, -46, 54, -61, 67, -73, 78, -82, 85, -88, 90, -90,
         90, -90, 88, -85, 82, -78, 73, -67, 61, -54, 46, -38, 31, -22, 13, -4], dtype=np.int32)
-
-@jit(target_backend='cuda', nopython=True)
-def partial_butterfly32(src, shift, line):
-    ptrdst = 0
-    ptrsrc = 0
-    add = 1 << (shift-1)
-    E = np.zeros(16, dtype=np.int32)
-    O = np.zeros(16, dtype=np.int32)
-    EE = np.zeros(8, dtype=np.int32)
-    EO = np.zeros(8, dtype=np.int32)
-    EEE = np.zeros(4, dtype=np.int32)
-    EEO = np.zeros(4, dtype=np.int32)
-    EEEE = np.zeros(2, dtype=np.int32)
-    EEEO = np.zeros(2, dtype=np.int32)
-    dst = np.zeros(1024, dtype=np.int32)
-    for j in range(line):
-        for k in range(16):
-            E[k] = src[k + ptrsrc] + src[31 - k + ptrsrc]
-            O[k] = src[k + ptrsrc] - src[31 - k + ptrsrc]
-        for k in range(8):
-            EE[k] = E[k] + E[15 - k]
-            EO[k] = E[k] - E[15 - k]
-        for k in range(4):
-            EEE[k] = EE[k] + EE[7 - k]
-            EEO[k] = EE[k] - EE[7 - k]
-        EEEE[0] = EEE[0] + EEE[3]
-        EEEO[0] = EEE[0] - EEE[3]
-        EEEE[1] = EEE[1] + EEE[2]
-        EEEO[1] = EEE[1] - EEE[2]
-
-        dst[0 + ptrdst] = np.int32((g_t32[0] * EEEE[0] + g_t32[1] * EEEE[1] + add) >> shift)
-        dst[16 * line + ptrdst] = np.int32((g_t32[512] * EEEE[0] + g_t32[512+1] * EEEE[1] + add) >> shift)
-        dst[8 * line + ptrdst] = np.int32((g_t32[256] * EEEO[0] + g_t32[256+1] * EEEO[1] + add) >> shift)
-        dst[24 * line + ptrdst] = np.int32((g_t32[768] * EEEO[0] + g_t32[768+1] * EEEO[1] + add) >> shift)
-
-        for k in range(4, 32, 8):
-            dst[k * line + ptrdst] = np.int32((g_t32[k*32+0] * EEO[0] + g_t32[k*32+1] * EEO[1]
-                                                + g_t32[k*32+2] * EEO[2] + g_t32[k*32+3] * EEO[3] + add)
-                                                >> shift)
-
-        for k in range(2, 32, 4):
-            dst[k * line + ptrdst] = np.int32((g_t32[k*32+0] * EO[0] + g_t32[k*32+1] * EO[1]
-                                                + g_t32[k*32+2] * EO[2] + g_t32[k*32+3] * EO[3]
-                                                + g_t32[k*32+4] * EO[4] + g_t32[k*32+5] * EO[5]
-                                                + g_t32[k*32+6] * EO[6] + g_t32[k*32+7] * EO[7] + add)
-                                                >> shift)
-
-        for k in range(1, 32, 2):
-            dst[k * line + ptrdst] = np.int32((g_t32[k*32+0] * O[0] + g_t32[k*32+1] * O[1] + g_t32[k*32+2] * O[2]
-                                                + g_t32[k*32+3] * O[3] + g_t32[k*32+4] * O[4] + g_t32[k*32+5] * O[5]
-                                                + g_t32[k*32+6] * O[6] + g_t32[k*32+7] * O[7] + g_t32[k*32+8] * O[8]
-                                                + g_t32[k*32+9] * O[9] + g_t32[k*32+10] * O[10] + g_t32[k*32+11] * O[11]
-                                                + g_t32[k*32+12] * O[12] + g_t32[k*32+13] * O[13] + g_t32[k*32+14] * O[14]
-                                                + g_t32[k*32+15] * O[15] + add)
-                                                >> shift)
-        ptrsrc += 32
-        ptrdst += 1
-    return dst
-
