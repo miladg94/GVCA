@@ -7,31 +7,31 @@ import math
 @jit(target_backend='cuda', nopython=True)
 def performDCT(Y, block_size, width, height):
     blocks = []
-    blocks_count = 0
+    bCount = 0
     for a in range(0, height, block_size):
         for b in range(0, width, block_size):
             block = Y[a:a + block_size, b:b + block_size]
             block = block.flatten()
             block = block.astype('int32')
             blocks.append(block)
-            blocks_count += 1
-    avgs = []
+            bCount += 1
     frameTex = 0
-    for i in range(blocks_count):
+    bEnergy = []
+    for i in range(bCount):
         buffer = dct.partial_butterfly32(blocks[i], 4, 32)
         DCT = dct.partial_butterfly32(buffer, 11, 32)
         WDCT = np.abs(DCT) * dct.weights_dct32 // 256
         sumW = sum(WDCT)
-        avg = sumW/len(WDCT)
-        avgs.append(avg)
+        bEnergy.append(sumW)
         frameTex += sumW
-    return frameTex // (blocks_count * 90), avgs, blocks_count
+    avgEnergy = frameTex // (bCount * 90)
+    return avgEnergy, bEnergy, bCount
 
 
 @jit(target_backend='cuda', nopython=True)
 def gpu(Y, block_size, width, height):
-    avgEnergy, blocksAVG, blkcnt = performDCT(Y, block_size, width, height)
-    return avgEnergy, blocksAVG, blkcnt
+    avgEnergy, bEnergy, bCount = performDCT(Y, block_size, width, height)
+    return avgEnergy, bEnergy, bCount
 
 
 def main():
@@ -55,6 +55,7 @@ def main():
     avg1 = np.zeros(frame_count)
     avg2 = np.zeros(frame_count)
     tempComps = []
+    avgsH = []
 
     with open(stream, 'rb') as file:
         start = timer()
@@ -68,19 +69,24 @@ def main():
                 Y[:, w + wp] = Y[:, w - 1]
 
             Ftime = timer()
-            avgE, blocksAVG, blocks_count = gpu(Y, block_size, width, height)
+            avgE, bEnergy, bCount = gpu(Y, block_size, width, height)
             avgsE.append(avgE)
 
-            avg1 = np.resize(avg1, blocks_count)
-            avg2 = blocksAVG.copy()
+            avg1 = np.resize(avg1, bCount)
+            avg2 = bEnergy.copy()
             tempComp = np.abs(avg2 - avg1)
             tempComps.append(tempComp)
             avg1 = avg2.copy()
+            sumTC = sum(tempComp)
+            lenTC = len(tempComp)
+            avgTC = sumTC / (lenTC * 18)
+            avgsH.append(avgTC)
 
-            #print(f, avgsE[f])
-            print("GPU Frame Time:", f, timer() - Ftime)
+            print(f, avgsE[f], avgsH[f])
+            #print("GPU Frame Time:", f, timer() - Ftime)
+        avgsH[0] = 0
         print(" GPU Total Time:", timer() - start)
-    return totalAverageEnergy, tempComps
+    return avgsE, avgsH
 
 
 if __name__ == "__main__":
