@@ -3,6 +3,8 @@ import numpy as np
 from numba import jit, cuda
 from timeit import default_timer as timer
 import DCTTransformNative as dct
+import torch
+import torch_dct as tdct
 
 # C:\Users\rnili\OneDrive\Desktop\VCA-stable\test.yuv
 #stream = input("Enter path to input file: ")
@@ -21,6 +23,7 @@ hpad = height - h
 wpad = width - w
 frame_count = 600
 frame_size = int(1.5 * w * h)
+
 
 @jit(target_backend='cuda', nopython=True)
 def performDCT(Y, block_size, width, height):
@@ -57,7 +60,6 @@ def main():
     avg2 = np.zeros(frame_count)
     avgsE = []
     avgsH = []
-
     with open(stream, 'rb') as file:
         start = timer()
         for f in range(frame_count):
@@ -68,23 +70,17 @@ def main():
                 Y[h + hp, :] = Y[h - 1, :]
             for wp in range(wpad):
                 Y[:, w + wp] = Y[:, w - 1]
-
-            Ftime = timer()
+            fTime = timer()
             avgE, bEnergy, bCount = performDCT(Y, block_size, width, height)
             avgsE.append(avgE)
-
             avg1 = np.resize(avg1, bCount)
             avg2 = bEnergy.copy()
-            tempComp = np.abs(avg2 - avg1)
+            TC = np.abs(avg2 - avg1)
             avg1 = avg2.copy()
-            sumTC = sum(tempComp)
-            lenTC = len(tempComp)
-            avgTC = sumTC / (lenTC * 18)
+            avgTC = sum(TC) / (len(TC) * 18)
             avgsH.append(avgTC)
             avgsH[0] = 0
-
-            print(f, avgsE[f], avgsH[f])
-            #print("GPU Frame Time:", f, timer() - Ftime)
+            print(f, avgsE[f], avgsH[f], timer() - fTime)
         print(" GPU Total Time:", timer() - start)
     return avgsE, avgsH
 
